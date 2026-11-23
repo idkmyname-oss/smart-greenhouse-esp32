@@ -279,6 +279,40 @@ svg {
 .status-pill[data-s="on"] .pulse-dot {
   background: var(--acc);
   box-shadow: 0 0 0 4px var(--acc-soft);
+  animation: livePulse 2.2s var(--ease) infinite;
+}
+
+@keyframes livePulse {
+  0%, 100% { box-shadow: 0 0 0 3px var(--acc-soft); transform: scale(1); }
+  50% { box-shadow: 0 0 0 8px rgba(116, 198, 152, 0.04); transform: scale(1.14); }
+}
+
+.metric-cell {
+  background: var(--surf);
+  padding: 22px 22px 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 14px;
+  text-align: left;
+  position: relative;
+  transition: background 0.28s var(--ease), transform 0.32s var(--ease), box-shadow 0.32s var(--ease);
+}
+
+.metric-cell:hover {
+  background: var(--surf-2);
+  transform: translateY(-2px);
+  z-index: 2;
+  box-shadow: var(--shadow-sm);
+}
+
+.metric-cell:active {
+  transform: scale(0.985);
+}
+
+.badge.flash {
+  border-color: var(--acc);
+  box-shadow: 0 0 0 4px var(--acc-soft);
 }
 
 .status-pill[data-s="wait"] .pulse-dot {
@@ -864,6 +898,12 @@ svg {
 .sw[data-pending="true"] {
   border-color: var(--amb);
   box-shadow: 0 0 0 3px var(--amb-soft);
+  animation: pendingPulse 1.1s ease-in-out infinite;
+}
+
+@keyframes pendingPulse {
+  0%, 100% { box-shadow: 0 0 0 2px var(--amb-soft); }
+  50% { box-shadow: 0 0 0 7px rgba(229, 171, 76, 0.08); }
 }
 
 .sw:disabled {

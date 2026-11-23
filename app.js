@@ -147,7 +147,7 @@ const Store = {
         this.note('warn', `Timeout konfirmasi perangkat untuk ${key}`);
         this.emit();
       }
-    }, 15000);
+    }, 10000);
     this.pending[key] = { value, sentAt: Date.now(), timer };
     this.emit();
   },
@@ -512,7 +512,9 @@ const App = {
   analyticsCache: null,
   miniCaches: {},
   tempTween: { val: 0 },
+  metricTweens: {},
   lastRenderedTemp: null,
+  lastPacketTs: null,
   drawerOpen: false,
   threshDirty: false,
 
@@ -1301,15 +1303,44 @@ const App = {
     const age = Store.age();
     $('#badgeSync').textContent = age === null ? 'SYNC: —' : `SYNC: ${Math.max(0, Math.round(age))}s`;
 
+    const tsNow = Store.g.timestamp?.updatedAt || null;
+    if (tsNow && tsNow !== this.lastPacketTs) {
+      this.lastPacketTs = tsNow;
+      const syncB = $('#badgeSync');
+      if (syncB) {
+        syncB.classList.add('flash');
+        setTimeout(() => syncB.classList.remove('flash'), 420);
+      }
+    }
+
     SENSORS_LIST.forEach((m) => {
       const val = s[m.key];
-      $$(`[data-s="${m.key}"]`).forEach((n) => {
-        n.textContent = FMT[m.key](val);
-      });
+      const minOk = m.key === 'temperature' || m.key === 'humidity' ? -90 : -1;
+      const isValid = validNum(val, minOk);
+      const nodes = $$(`[data-s="${m.key}"]`);
+      if (isValid && motionEnabled()) {
+        if (!this.metricTweens[m.key]) this.metricTweens[m.key] = { val };
+        if (this.metricTweens[m.key].target !== val) {
+          this.metricTweens[m.key].target = val;
+          window.gsap.to(this.metricTweens[m.key], {
+            val,
+            duration: 0.55,
+            ease: 'power2.out',
+            onUpdate: () => {
+              const cur = this.metricTweens[m.key].val;
+              const txt = m.key === 'temperature' ? `${cur.toFixed(1)}°C` : m.key === 'humidity' ? `${cur.toFixed(1)}%` : `${Math.round(cur)}%`;
+              nodes.forEach((n) => { n.textContent = txt; });
+            },
+          });
+        }
+      } else {
+        nodes.forEach((n) => {
+          n.textContent = FMT[m.key](val);
+        });
+      }
       const bar = $(`[data-bar="${m.key}"]`);
       if (bar) {
-        const minOk = m.key === 'temperature' || m.key === 'humidity' ? -90 : -1;
-        const pct = validNum(val, minOk) ? Math.min(100, Math.max(0, (val / m.max) * 100)) : 0;
+        const pct = isValid ? Math.min(100, Math.max(0, (val / m.max) * 100)) : 0;
         bar.style.width = pct + '%';
       }
     });
@@ -1826,7 +1857,7 @@ const App = {
     setInterval(() => {
       Track.tick();
       Store.emit();
-    }, 5000);
+    }, 1000);
     const initial = location.hash.slice(1) || 'overview';
     this.go(initial, 0, false);
     Link.start();

@@ -6,7 +6,7 @@
 #include <Preferences.h>
 #include <time.h>
 
-const char* DEFAULT_WIFI_SSID = "ISI_NAMA_WIFI";
+const char* DEFAULT_WIFI_SSID = "Xiaomi 17 Ultra";
 const char* DEFAULT_WIFI_PASSWORD = "ISI_PASSWORD_WIFI";
 const char* FIREBASE_HOST = "smart-greenhouse-esp32-default-rtdb.asia-southeast1.firebasedatabase.app";
 const char* FIREBASE_AUTH_TOKEN = "";
@@ -61,8 +61,8 @@ const int ADC_MAKS = 4095;
 const int JUMLAH_SAMPEL = 5;
 const int BATAS_SELISIH_ADC = 800;
 
-const int TANAH_ADC_KERING = 0;
-const int TANAH_ADC_BASAH = 4095;
+const int TANAH_ADC_KERING = 3200;
+const int TANAH_ADC_BASAH = 1200;
 const int CAHAYA_ADC_GELAP = 0;
 const int CAHAYA_ADC_TERANG = 4095;
 
@@ -96,17 +96,20 @@ bool wifiPakaiDefault = true;
 String wifiPesan = "Menggunakan Wi-Fi default dari firmware";
 String wifiReqTerakhir = "";
 
-const unsigned long JEDA_SENSOR = 1000;
-const unsigned long JEDA_FIREBASE = 5000;
-const unsigned long JEDA_SAMBUNG_ULANG = 15000;
+const unsigned long JEDA_SENSOR = 800;
+const unsigned long JEDA_FIREBASE = 1200;
+const unsigned long JEDA_SAMBUNG_ULANG = 12000;
 const unsigned long BATAS_WAKTU_WIFI = 15000;
-const int BATAS_GAGAL = 3;
+const int BATAS_GAGAL = 4;
 
 DHT dht(PIN_DHT, DHT22);
 Servo servoVentilasi;
 Preferences prefs;
+WiFiClientSecure klienTls;
+HTTPClient httpFb;
 
 int kelembapanTanah = -1;
+int adcTanahTerakhir = -1;
 int intensitasCahaya = -1;
 int tinggiAir = -1;
 float suhu = NAN;
@@ -199,15 +202,30 @@ void siapkanRelay(int pin) {
   digitalWrite(pin, RELAY_MATI);
 }
 
+void siapkanServo() {
+  ESP32PWM::allocateTimer(0);
+  ESP32PWM::allocateTimer(1);
+  servoVentilasi.setPeriodHertz(50);
+  servoVentilasi.attach(PIN_SERVO, 500, 2400);
+  servoVentilasi.write(sudutTutup);
+  delay(250);
+  servoVentilasi.write(constrain(sudutTutup + 35, 0, 180));
+  delay(300);
+  servoVentilasi.write(sudutTutup);
+  sudutTerakhir = sudutTutup;
+}
+
 bool cobaSambungWifi(const String &ssid, const String &pass) {
   WiFi.disconnect(true);
   delay(200);
   WiFi.mode(WIFI_STA);
+  WiFi.setTxPower(WIFI_POWER_8_5dBm);
+  WiFi.setAutoReconnect(true);
   WiFi.begin(ssid.c_str(), pass.c_str());
 
   unsigned long mulai = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - mulai < BATAS_WAKTU_WIFI) {
-    delay(250);
+    delay(200);
   }
   return WiFi.status() == WL_CONNECTED;
 }
@@ -245,7 +263,7 @@ int bacaAdcStabil(int pin, bool &valid) {
     total += nilai;
     if (nilai < terkecil) terkecil = nilai;
     if (nilai > terbesar) terbesar = nilai;
-    delay(5);
+    delay(3);
   }
 
   valid = (terbesar - terkecil) <= BATAS_SELISIH_ADC;
@@ -255,6 +273,7 @@ int bacaAdcStabil(int pin, bool &valid) {
 int bacaKelembapanTanah() {
   bool valid = false;
   int adc = bacaAdcStabil(PIN_TANAH, valid);
+  adcTanahTerakhir = adc;
   if (!valid) return -1;
   int persen = map(adc, TANAH_ADC_KERING, TANAH_ADC_BASAH, 0, 100);
   return constrain(persen, 0, 100);
@@ -275,7 +294,7 @@ float bacaJarakCm() {
   delayMicroseconds(10);
   digitalWrite(PIN_TRIG, LOW);
 
-  unsigned long durasi = pulseIn(PIN_ECHO, HIGH, 30000UL);
+  unsigned long durasi = pulseIn(PIN_ECHO, HIGH, 25000UL);
   if (durasi == 0) return -1.0;
   return durasi * 0.0343 / 2.0;
 }
@@ -337,6 +356,9 @@ void terapkanKeluaran() {
 
   int targetSudut = ventilasiBuka ? sudutBuka : sudutTutup;
   if (targetSudut != sudutTerakhir) {
+    if (!servoVentilasi.attached()) {
+      servoVentilasi.attach(PIN_SERVO, 500, 2400);
+    }
     servoVentilasi.write(targetSudut);
     sudutTerakhir = targetSudut;
   }
@@ -345,11 +367,10 @@ void terapkanKeluaran() {
 void cetakStatus() {
   const char* mode = modeManual ? "MANUAL" : "AUTO";
 
-  Serial.printf("T=%.1f H=%.1f | soil=%d%% light=%d%%\n",
-                suhu, kelembapanUdara, kelembapanTanah, intensitasCahaya);
-  Serial.printf("water=%d%% | fan=%s(%d) lamp=%s(%d)\n",
-                tinggiAir, mode, kipasMenyala, mode, lampuMenyala);
-  Serial.printf("pump=%s(%d) servo=%s(%d)\n", mode, pompaMenyala, mode, ventilasiBuka);
+  Serial.printf("T=%.1f H=%.1f | soil=%d%% (adc=%d) light=%d%%\n",
+                suhu, kelembapanUdara, kelembapanTanah, adcTanahTerakhir, intensitasCahaya);
+  Serial.printf("water=%d%% | fan=%s(%d) lamp=%s(%d) pump=%s(%d) servo=%s(%d,%ddeg)\n",
+                tinggiAir, mode, kipasMenyala, mode, lampuMenyala, mode, pompaMenyala, mode, ventilasiBuka, sudutTerakhir);
 
   if (tinggiAir < 0) {
     Serial.println("PERINGATAN: sensor air tidak terbaca!");
@@ -422,6 +443,27 @@ String susunDataKoneksi() {
   json += ",\"wifiMsg\":\"" + escapeJson(wifiPesan) + "\"";
   json += "}";
   return json;
+}
+
+String ambilObjek(const String &json, const char* kunci) {
+  String cari = String("\"") + kunci + "\":{";
+  int pos = json.indexOf(cari);
+  if (pos < 0) return "";
+  int start = pos + cari.length() - 1;
+  int depth = 0;
+  bool inStr = false;
+  for (int i = start; i < (int)json.length(); i++) {
+    char c = json[i];
+    if (c == '\"' && (i == 0 || json[i - 1] != '\\')) inStr = !inStr;
+    if (!inStr) {
+      if (c == '{') depth++;
+      else if (c == '}') {
+        depth--;
+        if (depth == 0) return json.substring(start, i + 1);
+      }
+    }
+  }
+  return "";
 }
 
 bool nilaiBenar(const String &json, const char* kunci) {
@@ -538,35 +580,22 @@ String buatUriFirebase(const String &jalur) {
   return uri;
 }
 
-bool firebaseAmbil(const String &jalur, String &hasil) {
-  WiFiClientSecure klien;
-  klien.setCACert(FIREBASE_ROOT_CA);
-
-  HTTPClient http;
+bool firebaseRequest(const char* method, const String &jalur, const String &body, String &hasil) {
   String uri = buatUriFirebase(jalur);
-  if (!http.begin(klien, FIREBASE_HOST, 443, uri, true)) return false;
-  http.setTimeout(5000);
-
-  int kode = http.GET();
+  httpFb.setReuse(true);
+  if (!httpFb.begin(klienTls, FIREBASE_HOST, 443, uri, true)) return false;
+  httpFb.setTimeout(3500);
+  int kode = -1;
+  if (strcmp(method, "GET") == 0) {
+    kode = httpFb.GET();
+  } else {
+    httpFb.addHeader("Content-Type", "application/json");
+    kode = httpFb.sendRequest(method, body);
+  }
   bool berhasil = (kode == 200);
-  if (berhasil) hasil = http.getString();
-  http.end();
+  if (berhasil && strcmp(method, "GET") == 0) hasil = httpFb.getString();
+  httpFb.end();
   return berhasil;
-}
-
-bool firebaseKirim(const String &jalur, const String &json) {
-  WiFiClientSecure klien;
-  klien.setCACert(FIREBASE_ROOT_CA);
-
-  HTTPClient http;
-  String uri = buatUriFirebase(jalur);
-  if (!http.begin(klien, FIREBASE_HOST, 443, uri, true)) return false;
-  http.setTimeout(5000);
-  http.addHeader("Content-Type", "application/json");
-
-  int kode = http.PUT(json);
-  http.end();
-  return kode == 200;
 }
 
 void prosesPerintahWifi(const String &json) {
@@ -577,7 +606,8 @@ void prosesPerintahWifi(const String &json) {
   if (reqId.length() > 0 && reqId == wifiReqTerakhir) return;
   wifiReqTerakhir = reqId;
 
-  firebaseKirim("/greenhouse/commands/wifi", "null");
+  String dummy;
+  firebaseRequest("PUT", "/greenhouse/commands/wifi", "null", dummy);
 
   String lamaSsid = wifiSsidAktif;
   String lamaPass = wifiPassAktif;
@@ -635,61 +665,67 @@ void sinkronFirebase() {
     return;
   }
 
-  String perintahWifi;
-  if (firebaseAmbil("/greenhouse/commands/wifi", perintahWifi) && perintahWifi.length() > 4 && perintahWifi != "null") {
-    prosesPerintahWifi(perintahWifi);
-  }
-
-  String balasanBatas;
-  if (firebaseAmbil("/greenhouse/thresholds", balasanBatas)) {
-    if (balasanBatas.length() > 4 && balasanBatas != "null") {
-      terapkanBatasDariJson(balasanBatas);
-    } else {
-      firebaseKirim("/greenhouse/thresholds", susunDataBatas());
-    }
-  }
-
-  String balasanMode;
-  if (firebaseAmbil("/greenhouse/mode/controlMode", balasanMode)) {
+  String semuaData;
+  if (firebaseRequest("GET", "/greenhouse", "", semuaData) && semuaData.length() > 4 && semuaData != "null") {
     gagalBeruntun = 0;
-    modeManual = balasanMode.indexOf("MANUAL") >= 0;
-  } else {
-    catatGagal();
-  }
 
-  if (modeManual) {
-    String perintah;
-    if (firebaseAmbil("/greenhouse/commands", perintah) && perintah.length() > 4 && perintah != "null") {
-      if (adaKunci(perintah, "pump")) pompaMenyala = nilaiBenar(perintah, "pump");
-      if (adaKunci(perintah, "fan")) kipasMenyala = nilaiBenar(perintah, "fan");
-      if (adaKunci(perintah, "lamp")) lampuMenyala = nilaiBenar(perintah, "lamp");
-      if (adaKunci(perintah, "servo")) ventilasiBuka = nilaiBenar(perintah, "servo");
-      terapkanKeluaran();
-    } else if (firebaseAmbil("/greenhouse/actuators", perintah) && perintah.length() > 4 && perintah != "null") {
-      pompaMenyala = nilaiBenar(perintah, "pump");
-      kipasMenyala = nilaiBenar(perintah, "fan");
-      lampuMenyala = nilaiBenar(perintah, "lamp");
-      ventilasiBuka = nilaiBenar(perintah, "servo");
-      terapkanKeluaran();
+    String objCmd = ambilObjek(semuaData, "commands");
+    if (objCmd.length() > 4) {
+      String objWifi = ambilObjek(objCmd, "wifi");
+      if (objWifi.length() > 4) {
+        prosesPerintahWifi(objWifi);
+      }
+    }
+
+    String objThresh = ambilObjek(semuaData, "thresholds");
+    bool perluKirimBatas = false;
+    if (objThresh.length() > 4) {
+      terapkanBatasDariJson(objThresh);
     } else {
+      perluKirimBatas = true;
+    }
+
+    String objMode = ambilObjek(semuaData, "mode");
+    if (objMode.length() > 4) {
+      modeManual = objMode.indexOf("MANUAL") >= 0;
+    }
+
+    if (modeManual) {
+      if (objCmd.length() > 4) {
+        if (adaKunci(objCmd, "pump")) pompaMenyala = nilaiBenar(objCmd, "pump");
+        if (adaKunci(objCmd, "fan")) kipasMenyala = nilaiBenar(objCmd, "fan");
+        if (adaKunci(objCmd, "lamp")) lampuMenyala = nilaiBenar(objCmd, "lamp");
+        if (adaKunci(objCmd, "servo")) ventilasiBuka = nilaiBenar(objCmd, "servo");
+        terapkanKeluaran();
+      }
+    }
+
+    String batch = "{";
+    batch += "\"sensors\":" + susunDataSensor();
+    batch += ",\"actuators\":" + susunDataAktuator();
+    batch += ",\"connection\":" + susunDataKoneksi();
+    if (perluKirimBatas) {
+      batch += ",\"thresholds\":" + susunDataBatas();
+    }
+    unsigned long waktuSekarang = (unsigned long)time(nullptr);
+    if (waktuSekarang > 1700000000UL) {
+      batch += ",\"timestamp\":{\"updatedAt\":" + String(waktuSekarang) + "}";
+    }
+    batch += "}";
+
+    String dummy;
+    if (!firebaseRequest("PATCH", "/greenhouse", batch, dummy)) {
       catatGagal();
     }
-  }
-
-  firebaseKirim("/greenhouse/actuators", susunDataAktuator());
-  firebaseKirim("/greenhouse/sensors", susunDataSensor());
-  firebaseKirim("/greenhouse/connection", susunDataKoneksi());
-
-  unsigned long waktuSekarang = (unsigned long)time(nullptr);
-  if (waktuSekarang > 1700000000UL) {
-    firebaseKirim("/greenhouse/timestamp/updatedAt", String(waktuSekarang));
+  } else {
+    catatGagal();
   }
 }
 
 void setup() {
   Serial.begin(115200);
   unsigned long tungguSerial = millis();
-  while (!Serial && millis() - tungguSerial < 3000) {
+  while (!Serial && millis() - tungguSerial < 2000) {
     delay(10);
   }
 
@@ -706,10 +742,9 @@ void setup() {
   siapkanRelay(PIN_LAMPU);
 
   dht.begin();
-  servoVentilasi.attach(PIN_SERVO);
-  servoVentilasi.write(sudutTutup);
-  sudutTerakhir = sudutTutup;
+  siapkanServo();
 
+  klienTls.setCACert(FIREBASE_ROOT_CA);
   sambungWifi();
   configTime(25200, 0, "pool.ntp.org");
 
@@ -721,7 +756,9 @@ void loop() {
 
   if (WiFi.status() != WL_CONNECTED && sekarang - waktuWifiTerakhir >= JEDA_SAMBUNG_ULANG) {
     waktuWifiTerakhir = sekarang;
-    WiFi.reconnect();
+    WiFi.disconnect(false);
+    WiFi.setTxPower(WIFI_POWER_8_5dBm);
+    WiFi.begin(wifiSsidAktif.c_str(), wifiPassAktif.c_str());
   }
 
   if (sekarang - waktuSensorTerakhir >= JEDA_SENSOR) {

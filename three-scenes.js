@@ -255,6 +255,21 @@ function buildGreenhouseScene(scene, pal, quality) {
   dhtNode.position.set(0, 1.6, -D / 2 + 0.08);
   root.add(dhtNode);
 
+  const moteCount = quality === 'low' ? 24 : 56;
+  const moteGeo = new THREE.BufferGeometry();
+  const motePos = new Float32Array(moteCount * 3);
+  const moteSeed = new Float32Array(moteCount);
+  for (let i = 0; i < moteCount; i++) {
+    moteSeed[i] = Math.random() * Math.PI * 2;
+    motePos[i * 3] = (Math.random() - 0.5) * (W - 0.5);
+    motePos[i * 3 + 1] = 0.5 + Math.random() * (H + 0.4);
+    motePos[i * 3 + 2] = (Math.random() - 0.5) * (D - 0.5);
+  }
+  moteGeo.setAttribute('position', new THREE.BufferAttribute(motePos, 3));
+  const moteMat = new THREE.PointsMaterial({ color: 0x9fd8b5, size: 0.042, transparent: true, opacity: 0.48 });
+  const motes = new THREE.Points(moteGeo, moteMat);
+  root.add(motes);
+
   const state = { water: 0, vent: 0, fanSpeed: 0, lamp: 0, soil: 0.4 };
 
   const presets = {
@@ -269,46 +284,58 @@ function buildGreenhouseScene(scene, pal, quality) {
     presets,
     update(dt, elapsed, data) {
       const targetWater = data.waterLevel >= 0 ? clamp(data.waterLevel / 100, 0.03, 1) : 0.03;
-      state.water = lerp(state.water, targetWater, dt * 3.2);
+      state.water = lerp(state.water, targetWater, dt * 4.5);
       waterMesh.scale.y = state.water;
       waterMesh.position.y = (1.14 * state.water) / 2 + 0.03;
 
       const targetVent = data.servo ? 0.68 : 0;
-      state.vent = lerp(state.vent, targetVent, dt * 3.5);
+      state.vent = lerp(state.vent, targetVent, dt * 4.8);
       ventPanel.rotation.x = -state.vent;
 
-      const targetFan = data.fan ? 14 : 0;
-      state.fanSpeed = lerp(state.fanSpeed, targetFan, dt * (data.fan ? 2.2 : 1.1));
+      const targetFan = data.fan ? 16 : 0;
+      state.fanSpeed = lerp(state.fanSpeed, targetFan, dt * (data.fan ? 2.8 : 1.15));
       fanRotor.rotation.z -= state.fanSpeed * dt;
 
       const targetLamp = data.lamp ? 1 : 0;
-      state.lamp = lerp(state.lamp, targetLamp, dt * 3.5);
-      bulbMat.emissiveIntensity = state.lamp * 2.4;
-      lampLight.intensity = state.lamp * 4.5;
-      coneMat.opacity = state.lamp * 0.11;
+      state.lamp = lerp(state.lamp, targetLamp, dt * 4.5);
+      bulbMat.emissiveIntensity = state.lamp * 2.6;
+      lampLight.intensity = state.lamp * 5.0;
+      coneMat.opacity = state.lamp * 0.13;
 
       const targetSoil = data.soilMoisture >= 0 ? clamp(data.soilMoisture / 100, 0, 1) : 0.3;
-      state.soil = lerp(state.soil, targetSoil, dt * 2.5);
+      state.soil = lerp(state.soil, targetSoil, dt * 3.5);
       const dryC = new THREE.Color(0x9b7653);
       const wetC = new THREE.Color(0x3a2618);
       soilMat.color.lerpColors(dryC, wetC, state.soil);
       soilMat.roughness = lerp(0.95, 0.42, state.soil);
 
       const pumpActive = !!data.pump;
-      dropMat.opacity = lerp(dropMat.opacity, pumpActive ? 0.85 : 0, dt * 4);
+      dropMat.opacity = lerp(dropMat.opacity, pumpActive ? 0.88 : 0, dt * 5);
       if (dropMat.opacity > 0.02) {
         const pos = dropGeo.attributes.position;
         for (let i = 0; i < dropCount; i++) {
-          dropPhase[i] = (dropPhase[i] + dt * 0.9) % 1;
+          dropPhase[i] = (dropPhase[i] + dt * 1.05) % 1;
           pos.setY(i, 0.9 - dropPhase[i] * 0.48);
         }
         pos.needsUpdate = true;
       }
 
-      const windAmp = 0.015 + (state.fanSpeed / 14) * 0.065;
+      const windAmp = 0.018 + (state.fanSpeed / 16) * 0.075;
       plants.forEach((p) => {
-        p.g.rotation.z = Math.sin(elapsed * (1.8 + state.fanSpeed * 0.25) + p.phase) * windAmp;
+        p.g.rotation.z = Math.sin(elapsed * (2.0 + state.fanSpeed * 0.28) + p.phase) * windAmp;
       });
+
+      const mPos = moteGeo.attributes.position;
+      const driftX = 0.08 + (state.fanSpeed / 16) * 0.95;
+      moteMat.color.lerpColors(new THREE.Color(0x9fd8b5), new THREE.Color(0xffd78a), state.lamp);
+      moteMat.opacity = 0.38 + state.lamp * 0.32;
+      for (let i = 0; i < moteCount; i++) {
+        let mx = mPos.getX(i) + dt * driftX;
+        if (mx > W / 2 - 0.25) mx = -W / 2 + 0.25;
+        const my = mPos.getY(i) + Math.sin(elapsed * 1.4 + moteSeed[i]) * dt * 0.14;
+        mPos.setXY(i, mx, clamp(my, 0.5, H + 0.5));
+      }
+      mPos.needsUpdate = true;
     },
   };
 }
@@ -1013,6 +1040,7 @@ export const SceneManager = {
     let targetRadius = radius;
     let dragging = false;
     let lastX = 0, lastY = 0;
+    let hoverX = 0, hoverY = 0;
 
     const onDown = (e) => {
       dragging = true;
@@ -1021,6 +1049,11 @@ export const SceneManager = {
       renderer.domElement.setPointerCapture(e.pointerId);
     };
     const onMove = (e) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        hoverX = ((e.clientX - rect.left) / rect.width - 0.5) * 2;
+        hoverY = ((e.clientY - rect.top) / rect.height - 0.5) * 2;
+      }
       if (!dragging) return;
       const dx = e.clientX - lastX;
       const dy = e.clientY - lastY;
@@ -1029,6 +1062,7 @@ export const SceneManager = {
       targetYaw -= dx * 0.008;
       targetPitch = clamp(targetPitch + dy * 0.006, 0.08, 1.32);
     };
+    const onLeave = () => { hoverX = 0; hoverY = 0; };
     const onUp = () => { dragging = false; };
     const onWheel = (e) => {
       e.preventDefault();
@@ -1037,6 +1071,7 @@ export const SceneManager = {
 
     renderer.domElement.addEventListener('pointerdown', onDown);
     renderer.domElement.addEventListener('pointermove', onMove);
+    renderer.domElement.addEventListener('pointerleave', onLeave);
     renderer.domElement.addEventListener('pointerup', onUp);
     renderer.domElement.addEventListener('pointercancel', onUp);
     renderer.domElement.addEventListener('wheel', onWheel, { passive: false });
@@ -1067,12 +1102,14 @@ export const SceneManager = {
       const motionOn = document.documentElement.dataset.motion !== 'off';
 
       if (!dragging && motionOn) {
-        targetYaw += dt * 0.06;
+        targetYaw += dt * 0.085;
       }
-      yaw = lerp(yaw, targetYaw, dt * 6);
-      pitch = lerp(pitch, targetPitch, dt * 6);
-      radius = lerp(radius, targetRadius, dt * 6);
-      target.lerp(desiredTarget, dt * 5);
+      const pYaw = targetYaw + (motionOn && !dragging ? hoverX * 0.14 : 0);
+      const pPitch = clamp(targetPitch + (motionOn && !dragging ? hoverY * 0.08 : 0), 0.08, 1.32);
+      yaw = lerp(yaw, pYaw, dt * 6.5);
+      pitch = lerp(pitch, pPitch, dt * 6.5);
+      radius = lerp(radius, targetRadius, dt * 6.5);
+      target.lerp(desiredTarget, dt * 5.5);
 
       camera.position.set(
         target.x + Math.cos(pitch) * Math.sin(yaw) * radius,
@@ -1104,6 +1141,7 @@ export const SceneManager = {
         io.disconnect();
         renderer.domElement.removeEventListener('pointerdown', onDown);
         renderer.domElement.removeEventListener('pointermove', onMove);
+        renderer.domElement.removeEventListener('pointerleave', onLeave);
         renderer.domElement.removeEventListener('pointerup', onUp);
         renderer.domElement.removeEventListener('pointercancel', onUp);
         renderer.domElement.removeEventListener('wheel', onWheel);
