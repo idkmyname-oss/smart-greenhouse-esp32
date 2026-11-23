@@ -147,7 +147,7 @@ const Store = {
         this.note('warn', `Timeout konfirmasi perangkat untuk ${key}`);
         this.emit();
       }
-    }, 10000);
+    }, 6000);
     this.pending[key] = { value, sentAt: Date.now(), timer };
     this.emit();
   },
@@ -244,10 +244,11 @@ const Link = {
   async put(path, value) {
     if (!this.check(Store.cfg.url)) throw new Error('Alamat database belum diatur');
     const ctl = new AbortController();
-    const to = setTimeout(() => ctl.abort(), 8000);
+    const to = setTimeout(() => ctl.abort(), 5000);
     try {
       const r = await fetch(`${this.base()}/greenhouse/${path}.json${this.query()}`, {
         method: 'PUT',
+        keepalive: true,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(value),
         signal: ctl.signal,
@@ -1271,8 +1272,9 @@ const App = {
       if (motionEnabled() && this.lastRenderedTemp !== s.temperature) {
         window.gsap.to(this.tempTween, {
           val: s.temperature,
-          duration: 0.7,
+          duration: 0.3,
           ease: 'power2.out',
+          overwrite: 'auto',
           onUpdate: () => {
             bigEl.textContent = this.tempTween.val.toFixed(1);
           },
@@ -1324,8 +1326,9 @@ const App = {
           this.metricTweens[m.key].target = val;
           window.gsap.to(this.metricTweens[m.key], {
             val,
-            duration: 0.55,
+            duration: 0.26,
             ease: 'power2.out',
+            overwrite: 'auto',
             onUpdate: () => {
               const cur = this.metricTweens[m.key].val;
               const txt = m.key === 'temperature' ? `${cur.toFixed(1)}°C` : m.key === 'humidity' ? `${cur.toFixed(1)}%` : `${Math.round(cur)}%`;
@@ -1855,8 +1858,19 @@ const App = {
     this.renderLogs();
     Store.sub(() => this.update());
     setInterval(() => {
+      const prev = Track.prevOnline;
       Track.tick();
-      Store.emit();
+      if (Track.prevOnline !== prev) {
+        Store.emit();
+      } else {
+        const age = Store.age();
+        const sb = $('#badgeSync');
+        if (sb) sb.textContent = age === null ? 'SYNC: —' : `SYNC: ${Math.max(0, Math.round(age))}s`;
+        const hl = $('#hLast');
+        if (hl) hl.textContent = age === null ? '—' : age < 90 ? `${Math.max(0, Math.round(age))} detik lalu` : `${Math.round(age / 60)} menit lalu`;
+        const da = $('#dAge');
+        if (da) da.textContent = age === null ? '—' : `${Math.round(age)} detik`;
+      }
     }, 1000);
     const initial = location.hash.slice(1) || 'overview';
     this.go(initial, 0, false);

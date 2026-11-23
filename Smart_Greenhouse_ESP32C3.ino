@@ -2,11 +2,10 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <DHT.h>
-#include <ESP32Servo.h>
 #include <Preferences.h>
 #include <time.h>
 
-const char* DEFAULT_WIFI_SSID = "Xiaomi 17 Ultra";
+const char* DEFAULT_WIFI_SSID = "ISI_NAMA_WIFI";
 const char* DEFAULT_WIFI_PASSWORD = "ISI_PASSWORD_WIFI";
 const char* FIREBASE_HOST = "smart-greenhouse-esp32-default-rtdb.asia-southeast1.firebasedatabase.app";
 const char* FIREBASE_AUTH_TOKEN = "";
@@ -56,6 +55,8 @@ const int PIN_SERVO = 21;
 
 const int RELAY_AKTIF = LOW;
 const int RELAY_MATI = HIGH;
+const int RELAY_LAMPU_AKTIF = HIGH;
+const int RELAY_LAMPU_MATI = LOW;
 
 const int ADC_MAKS = 4095;
 const int JUMLAH_SAMPEL = 5;
@@ -96,17 +97,17 @@ bool wifiPakaiDefault = true;
 String wifiPesan = "Menggunakan Wi-Fi default dari firmware";
 String wifiReqTerakhir = "";
 
-const unsigned long JEDA_SENSOR = 800;
-const unsigned long JEDA_FIREBASE = 1200;
-const unsigned long JEDA_SAMBUNG_ULANG = 12000;
+const unsigned long JEDA_SENSOR = 500;
+const unsigned long JEDA_FIREBASE = 450;
+const unsigned long JEDA_SAMBUNG_ULANG = 10000;
 const unsigned long BATAS_WAKTU_WIFI = 15000;
-const int BATAS_GAGAL = 4;
+const int BATAS_GAGAL = 5;
 
 DHT dht(PIN_DHT, DHT22);
-Servo servoVentilasi;
 Preferences prefs;
 WiFiClientSecure klienTls;
 HTTPClient httpFb;
+portMUX_TYPE muxData = portMUX_INITIALIZER_UNLOCKED;
 
 int kelembapanTanah = -1;
 int adcTanahTerakhir = -1;
@@ -193,25 +194,38 @@ void simpanBatasLokal() {
 }
 
 void tulisRelay(int pin, bool menyala) {
-  digitalWrite(pin, menyala ? RELAY_AKTIF : RELAY_MATI);
+  if (pin == PIN_LAMPU) {
+    digitalWrite(pin, menyala ? RELAY_LAMPU_AKTIF : RELAY_LAMPU_MATI);
+  } else {
+    digitalWrite(pin, menyala ? RELAY_AKTIF : RELAY_MATI);
+  }
 }
 
 void siapkanRelay(int pin) {
-  digitalWrite(pin, RELAY_MATI);
+  int nilaiMati = (pin == PIN_LAMPU) ? RELAY_LAMPU_MATI : RELAY_MATI;
+  digitalWrite(pin, nilaiMati);
   pinMode(pin, OUTPUT);
-  digitalWrite(pin, RELAY_MATI);
+  digitalWrite(pin, nilaiMati);
+}
+
+void tulisServoSudut(int sudut) {
+  int s = constrain(sudut, 0, 180);
+  uint32_t pulseUs = (uint32_t)map(s, 0, 180, 500, 2400);
+  uint32_t duty = (pulseUs * 16383UL) / 20000UL;
+  ledcWrite(PIN_SERVO, duty);
 }
 
 void siapkanServo() {
-  ESP32PWM::allocateTimer(0);
-  ESP32PWM::allocateTimer(1);
-  servoVentilasi.setPeriodHertz(50);
-  servoVentilasi.attach(PIN_SERVO, 500, 2400);
-  servoVentilasi.write(sudutTutup);
-  delay(250);
-  servoVentilasi.write(constrain(sudutTutup + 35, 0, 180));
-  delay(300);
-  servoVentilasi.write(sudutTutup);
+  ledcAttach(PIN_SERVO, 50, 14);
+  for (int pos = 0; pos <= 90; pos += 5) {
+    tulisServoSudut(pos);
+    delay(12);
+  }
+  for (int pos = 90; pos >= 0; pos -= 5) {
+    tulisServoSudut(pos);
+    delay(12);
+  }
+  tulisServoSudut(sudutTutup);
   sudutTerakhir = sudutTutup;
 }
 
@@ -356,10 +370,7 @@ void terapkanKeluaran() {
 
   int targetSudut = ventilasiBuka ? sudutBuka : sudutTutup;
   if (targetSudut != sudutTerakhir) {
-    if (!servoVentilasi.attached()) {
-      servoVentilasi.attach(PIN_SERVO, 500, 2400);
-    }
-    servoVentilasi.write(targetSudut);
+    tulisServoSudut(targetSudut);
     sudutTerakhir = targetSudut;
   }
 }
@@ -722,10 +733,20 @@ void sinkronFirebase() {
   }
 }
 
+void taskFirebase(void *param) {
+  (void)param;
+  for (;;) {
+    if (WiFi.status() == WL_CONNECTED) {
+      sinkronFirebase();
+    }
+    vTaskDelay(pdMS_TO_TICKS(JEDA_FIREBASE));
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   unsigned long tungguSerial = millis();
-  while (!Serial && millis() - tungguSerial < 2000) {
+  while (!Serial && millis() - tungguSerial < 1500) {
     delay(10);
   }
 
@@ -747,6 +768,8 @@ void setup() {
   klienTls.setCACert(FIREBASE_ROOT_CA);
   sambungWifi();
   configTime(25200, 0, "pool.ntp.org");
+
+  xTaskCreate(taskFirebase, "fb_sync", 8192, NULL, 1, NULL);
 
   Serial.println("Smart Greenhouse siap");
 }
@@ -771,8 +794,5 @@ void loop() {
     cetakStatus();
   }
 
-  if (sekarang - waktuFirebaseTerakhir >= JEDA_FIREBASE) {
-    waktuFirebaseTerakhir = sekarang;
-    sinkronFirebase();
-  }
+  delay(20);
 }
