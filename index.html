@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="id" data-theme="dark" data-motion="on" data-dock="bottom" data-quality="high">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>GREENHOUSE — Autonomous Botanical Control Platform</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@300;400;500;600;700&family=Syne:wght@500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script>
+(function(){try{var p=JSON.parse(localStorage.getItem('gh.prefs')||'{}');var t=p.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var r=matchMedia('(prefers-reduced-motion: reduce)').matches;document.documentElement.dataset.theme=t;document.documentElement.dataset.motion=(p.motion===false||r)?'off':'on';document.documentElement.dataset.dock=p.dock||'bottom';document.documentElement.dataset.quality=p.quality||'high';}catch(e){}})()
+</script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js"
+  }
+}
+</script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js" defer></script>
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<div class="ambient-grid" aria-hidden="true"></div>
+<header class="topbar" id="topbar">
+  <button class="brand" type="button" data-go="overview" aria-label="Beranda Greenhouse">
+    <span class="brand-mark">
+      <svg viewBox="0 0 28 28" aria-hidden="true">
+        <path d="M14 3 4 10.5V24h20V10.5L14 3Z"/>
+        <path d="M14 24V12.5M14 15.5c0-3.2 2.4-4.8 5-4.8 0 3.2-1.6 4.8-5 4.8ZM14 18c0-2.4-1.8-3.8-4.2-3.8 0 2.4 1.2 3.8 4.2 3.8Z"/>
+      </svg>
+    </span>
+    <span class="brand-text">
+      <strong>GREENHOUSE</strong>
+      <small>ESP32-C3 · TELEMETRY OS</small>
+    </span>
+  </button>
+  <div class="topbar-center" id="routeCrumb">
+    <span class="crumb-index" id="crumbIdx">01</span>
+    <span class="crumb-sep">/</span>
+    <span class="crumb-name" id="crumbName">RINGKASAN</span>
+  </div>
+  <div class="topbar-actions">
+    <button class="status-pill" id="linkPill" type="button" data-go="settings">
+      <span class="pulse-dot"></span>
+      <span class="pill-label">Belum terhubung</span>
+    </button>
+    <button class="icon-btn" id="dockBtn" type="button" aria-label="Pindahkan posisi navigasi" title="Pindah navigasi atas/bawah">
+      <svg viewBox="0 0 24 24"><path d="M7 14l5-5 5 5M7 20h10"/></svg>
+    </button>
+    <button class="icon-btn" id="themeBtn" type="button" aria-label="Ganti tema gelap atau terang" title="Ganti tema">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M5 19l1.5-1.5M17.5 6.5 19 5"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="swipe-hint" id="swipeHint" aria-hidden="true"></div>
+
+<main id="stageRoot" class="stage-root" aria-live="polite"></main>
+
+<nav class="dock-shell" id="dockShell" aria-label="Navigasi utama">
+  <div class="dock-drawer" id="dockDrawer" aria-hidden="true"></div>
+  <div class="dock-bar" id="dockBar">
+    <button class="dock-grip" id="dockGrip" type="button" aria-label="Geser navigasi ke atas atau bawah" title="Tarik ke atas/bawah"></button>
+    <div class="dock-track" id="dockTrack">
+      <span class="dock-indicator" id="dockIndicator" aria-hidden="true"></span>
+    </div>
+    <button class="dock-expand" id="dockExpand" type="button" aria-expanded="false" aria-label="Tampilkan semua halaman" title="Semua halaman">
+      <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+  </div>
+</nav>
+
+<div class="toast-stack" id="toasts" role="status" aria-live="polite"></div>
+
+<dialog class="modal-dlg" id="dlg">
+  <form method="dialog" class="modal-form">
+    <span class="modal-eyebrow">KONFIRMASI SISTEM</span>
+    <h3 id="dlgT"></h3>
+    <p id="dlgP"></p>
+    <div class="modal-actions">
+      <button value="no" class="btn-ghost" type="submit">Batal</button>
+      <button value="yes" class="btn-solid" id="dlgOk" type="submit">Lanjutkan</button>
+    </div>
+  </form>
+</dialog>
+</body>
+</html>
