@@ -230,7 +230,7 @@ export const DIAGRAM_NODES = [
   { id: 'pump', x: 794, y: 24, w: 146, h: 58, t: 'Pompa Air DC', p: 'GPIO6 · via Relay', io: 'AKTUATOR', d: 'Menyiram media tanam otomatis saat tanah kering atau mode MANUAL.', a: 'pump', page: 'water', scene: 'water' },
   { id: 'fan', x: 794, y: 104, w: 146, h: 58, t: 'Kipas DC', p: 'GPIO7 · via Relay', io: 'AKTUATOR', d: 'Sirkulasi udara dan pendinginan greenhouse saat suhu > 30 °C.', a: 'fan', page: 'fan', scene: 'fan' },
   { id: 'lamp', x: 794, y: 184, w: 146, h: 58, t: 'Lampu AC 220 V', p: 'GPIO10 · AC Terpisah', io: 'AKTUATOR AC', d: 'Pencahayaan greenhouse. Catu AC 220 V terpisah total dari rel baterai DC.', a: 'lamp', page: 'lighting', scene: 'lighting' },
-  { id: 'srv', x: 794, y: 280, w: 146, h: 58, t: 'Servo SG90', p: 'GPIO21 · PWM · 5 V', io: 'AKTUATOR PWM', d: 'Membuka ventilasi 90° saat panas dan menutup 0° saat normal.', a: 'servo', page: 'servo', scene: 'servo' },
+  { id: 'srv', x: 794, y: 280, w: 146, h: 58, t: 'Servo SG90', p: 'GPIO20 · PWM · 5 V', io: 'AKTUATOR PWM', d: 'Membuka dan menutup ventilasi (LEDC 50 Hz, 0°–180°).', a: 'servo', page: 'servo', scene: 'servo' },
   { id: 'wifi', x: 344, y: 400, w: 192, h: 58, t: 'Wi-Fi 802.11 b/g/n', p: 'TLS 1.2 · GTS Root CA', io: 'KOMUNIKASI', d: 'Jalur komunikasi terenkripsi ESP32-C3 ke cloud Firebase.' },
   { id: 'fb', x: 604, y: 400, w: 164, h: 58, t: 'Firebase RTDB', p: 'greenhouse/*', io: 'CLOUD DB', d: 'Menyimpan sensors, actuators (terkonfirmasi), commands, dan mode.' },
   { id: 'web', x: 816, y: 400, w: 124, h: 58, t: 'Website OS', p: 'SSE Realtime', io: 'ANTARMUKA', d: 'Dashboard monitoring 3D, analitik, log, dan kendali jarak jauh.', page: 'overview', scene: 'greenhouse' },

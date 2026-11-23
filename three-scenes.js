@@ -557,8 +557,8 @@ function buildServoScene(scene, pal) {
   hornPivot.add(hornArm);
 
   const arcRing = new THREE.Mesh(
-    new THREE.RingGeometry(0.96, 1.01, 24, 1, 0, Math.PI / 2),
-    new THREE.MeshBasicMaterial({ color: 0x74c698, transparent: true, opacity: 0.5, side: THREE.DoubleSide })
+    new THREE.RingGeometry(0.96, 1.01, 36, 1, 0, Math.PI),
+    new THREE.MeshBasicMaterial({ color: 0x74c698, transparent: true, opacity: 0.48, side: THREE.DoubleSide })
   );
   arcRing.rotation.x = -Math.PI / 2;
   arcRing.position.set(-0.72, 1.96, 0);
@@ -595,11 +595,12 @@ function buildServoScene(scene, pal) {
   return {
     presets: { all: { pos: [3.2, 3.0, 4.1], target: [0.15, 1.25, 0] } },
     update(dt, _el, data) {
-      const target = data.servo ? Math.PI / 2 : 0;
-      st.ang = lerp(st.ang, target, dt * 3.8);
+      const deg = typeof data.servoAngle === 'number' && data.servoAngle >= 0 ? clamp(data.servoAngle, 0, 180) : (data.servo ? 90 : 0);
+      const target = (deg * Math.PI) / 180;
+      st.ang = lerp(st.ang, target, dt * 6.5);
       hornPivot.rotation.y = st.ang;
       gearVis.rotation.y = st.ang * 3;
-      hinge.rotation.z = (st.ang / (Math.PI / 2)) * 0.72;
+      hinge.rotation.z = clamp(st.ang / Math.PI, 0, 1) * 1.1;
 
       const p1 = new THREE.Vector3(-0.72 + Math.cos(st.ang) * 0.82, 2.02, -Math.sin(st.ang) * 0.82);
       const p2 = new THREE.Vector3(0.25 + Math.cos(hinge.rotation.z) * 0.9, 1.2 + Math.sin(hinge.rotation.z) * 0.9, 0);
@@ -975,7 +976,7 @@ const BUILDERS = {
 
 export const SceneManager = {
   active: null,
-  stateData: { temperature: -99, humidity: -99, soilMoisture: -1, light: -1, waterLevel: -1, pump: false, fan: false, lamp: false, servo: false },
+  stateData: { temperature: -99, humidity: -99, soilMoisture: -1, light: -1, waterLevel: -1, pump: false, fan: false, lamp: false, servo: false, servoAngle: -1 },
 
   setData(d) {
     Object.assign(this.stateData, d);

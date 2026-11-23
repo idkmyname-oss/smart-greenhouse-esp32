@@ -51,7 +51,7 @@ const int PIN_ECHO = 5;
 const int PIN_POMPA = 6;
 const int PIN_KIPAS = 7;
 const int PIN_LAMPU = 10;
-const int PIN_SERVO = 21;
+const int PIN_SERVO = 20;
 
 const int RELAY_AKTIF = LOW;
 const int RELAY_MATI = HIGH;
@@ -120,6 +120,8 @@ bool pompaMenyala = false;
 bool kipasMenyala = false;
 bool lampuMenyala = false;
 bool ventilasiBuka = false;
+bool servoTestAktif = false;
+int servoTestSudut = 0;
 int sudutTerakhir = -1;
 
 bool modeManual = false;
@@ -211,19 +213,20 @@ void siapkanRelay(int pin) {
 void tulisServoSudut(int sudut) {
   int s = constrain(sudut, 0, 180);
   uint32_t pulseUs = (uint32_t)map(s, 0, 180, 500, 2400);
-  uint32_t duty = (pulseUs * 16383UL) / 20000UL;
+  uint32_t duty = (pulseUs * 4095UL) / 20000UL;
   ledcWrite(PIN_SERVO, duty);
 }
 
 void siapkanServo() {
-  ledcAttach(PIN_SERVO, 50, 14);
+  bool ok = ledcAttach(PIN_SERVO, 50, 12);
+  Serial.printf("Servo LEDC GPIO%d: %s\n", PIN_SERVO, ok ? "OK" : "GAGAL");
   for (int pos = 0; pos <= 90; pos += 5) {
     tulisServoSudut(pos);
-    delay(12);
+    delay(15);
   }
   for (int pos = 90; pos >= 0; pos -= 5) {
     tulisServoSudut(pos);
-    delay(12);
+    delay(15);
   }
   tulisServoSudut(sudutTutup);
   sudutTerakhir = sudutTutup;
@@ -368,7 +371,7 @@ void terapkanKeluaran() {
   tulisRelay(PIN_KIPAS, kipasMenyala);
   tulisRelay(PIN_LAMPU, lampuMenyala);
 
-  int targetSudut = ventilasiBuka ? sudutBuka : sudutTutup;
+  int targetSudut = servoTestAktif ? servoTestSudut : (ventilasiBuka ? sudutBuka : sudutTutup);
   if (targetSudut != sudutTerakhir) {
     tulisServoSudut(targetSudut);
     sudutTerakhir = targetSudut;
@@ -425,6 +428,8 @@ String susunDataAktuator() {
   json += ",\"fan\":" + teksBool(kipasMenyala);
   json += ",\"lamp\":" + teksBool(lampuMenyala);
   json += ",\"servo\":" + teksBool(ventilasiBuka);
+  json += ",\"servoAngle\":" + String(sudutTerakhir < 0 ? sudutTutup : sudutTerakhir);
+  json += ",\"servoTest\":" + teksBool(servoTestAktif);
   json += "}";
   return json;
 }
@@ -686,6 +691,18 @@ void sinkronFirebase() {
       if (objWifi.length() > 4) {
         prosesPerintahWifi(objWifi);
       }
+      if (adaKunci(objCmd, "servoTest")) {
+        servoTestAktif = nilaiBenar(objCmd, "servoTest");
+      } else {
+        servoTestAktif = false;
+      }
+      float sAng = 0;
+      if (servoTestAktif && ambilAngka(objCmd, "servoAngle", sAng)) {
+        servoTestSudut = constrain((int)round(sAng), 0, 180);
+        terapkanKeluaran();
+      }
+    } else {
+      servoTestAktif = false;
     }
 
     String objThresh = ambilObjek(semuaData, "thresholds");

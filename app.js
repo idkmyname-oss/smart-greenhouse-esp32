@@ -63,7 +63,7 @@ const DEVICES_LIST = [
   { key: 'pump', name: 'Pompa Air DC', pin: 'Relay GPIO6 · Aktif LOW', page: 'water', verbOn: 'Menyala', verbOff: 'Mati' },
   { key: 'fan', name: 'Kipas Sirkulasi DC', pin: 'Relay GPIO7 · Aktif LOW', page: 'fan', verbOn: 'Berputar', verbOff: 'Berhenti' },
   { key: 'lamp', name: 'Lampu AC 220 V', pin: 'Relay GPIO10 · AC Terpisah', page: 'lighting', verbOn: 'Menyala', verbOff: 'Mati' },
-  { key: 'servo', name: 'Ventilasi Servo SG90', pin: 'PWM GPIO21 · 5 V Terpisah', page: 'servo', verbOn: 'Terbuka (90°)', verbOff: 'Tertutup (0°)' },
+  { key: 'servo', name: 'Ventilasi Servo SG90', pin: 'PWM GPIO20 · 5 V Terpisah', page: 'servo', verbOn: 'Terbuka (90°)', verbOff: 'Tertutup (0°)' },
 ];
 
 const DEFAULT_FIREBASE_URL = 'https://smart-greenhouse-esp32-default-rtdb.asia-southeast1.firebasedatabase.app';
@@ -518,6 +518,64 @@ const App = {
   lastPacketTs: null,
   drawerOpen: false,
   threshDirty: false,
+  servoTestOpen: false,
+  servoSendTimer: null,
+  servoSweepTimer: null,
+
+  updateServoSliderUi(deg) {
+    const val = Math.max(0, Math.min(180, Math.round(Number(deg) || 0)));
+    const sl = $('#stSlider');
+    if (sl) {
+      sl.value = String(val);
+      sl.style.setProperty('--pct', `${(val / 180) * 100}%`);
+    }
+    const dg = $('#stDegVal');
+    if (dg) dg.textContent = `${val}°`;
+    const pwm = $('#stPwmVal');
+    if (pwm) pwm.textContent = `${Math.round(500 + (val / 180) * 1900)} µs · 50 Hz`;
+    $$('#stTicks .st-tick-btn').forEach((b) => b.classList.toggle('on', Number(b.dataset.ang) === val));
+  },
+
+  sendServoTest(active, angle) {
+    if (!Link.check(Store.cfg.url)) return;
+    clearTimeout(this.servoSendTimer);
+    this.servoSendTimer = setTimeout(async () => {
+      try {
+        await Link.put('commands/servoTest', !!active);
+        if (active) await Link.put('commands/servoAngle', Math.max(0, Math.min(180, Math.round(angle))));
+      } catch (e) {
+        Toast.show(e.message || 'Gagal mengirim perintah uji servo', 'err');
+      }
+    }, active ? 75 : 0);
+  },
+
+  toggleServoTest(force) {
+    const next = typeof force === 'boolean' ? force : !this.servoTestOpen;
+    this.servoTestOpen = next;
+    clearInterval(this.servoSweepTimer);
+    this.servoSweepTimer = null;
+    const panel = $('#servoTestPanel');
+    const fab = $('#servoTestFab');
+    if (!panel || !fab) return;
+    fab.setAttribute('aria-expanded', String(next));
+    panel.setAttribute('aria-hidden', String(!next));
+    if (next) {
+      const cur = typeof Store.confirmedAct().servoAngle === 'number' ? Store.confirmedAct().servoAngle : (Store.confirmedAct().servo ? 90 : 0);
+      this.updateServoSliderUi(cur);
+      panel.classList.add('open');
+      if (motionEnabled()) {
+        window.gsap.fromTo(panel, { opacity: 0, y: 14, scale: 0.95 }, { opacity: 1, y: 0, scale: 1, duration: 0.34, ease: 'power3.out' });
+      }
+      this.sendServoTest(true, cur);
+    } else {
+      this.sendServoTest(false, 0);
+      if (motionEnabled()) {
+        window.gsap.to(panel, { opacity: 0, y: 10, scale: 0.96, duration: 0.22, onComplete: () => panel.classList.remove('open') });
+      } else {
+        panel.classList.remove('open');
+      }
+    }
+  },
 
   fillThresholdForm(th) {
     const map = {
@@ -714,7 +772,7 @@ const App = {
         eyebrow: 'MEKANIKA VENTILASI ATAP',
         title: 'Servo & Ventilasi',
         lead: 'Model 3D aktuator mikro-servo SG90 lengkap dengan gear, horn, pushrod linkage, dan panel ventilasi greenhouse yang bergerak mekanis 0° hingga 90°.',
-        pin: 'PWM GPIO21 · Catu 5 V Terpisah',
+        pin: 'PWM GPIO20 · LEDC 50 Hz · 5 V Terpisah',
         diagNode: 'srv',
         scene: 'servo',
         hudTag: 'SG90 VENT MECHANISM',
@@ -723,7 +781,7 @@ const App = {
         rule: 'Buka 90° > 30°C · Tutup 0° < 27°C',
         sensors: ['temperature'],
         chartKey: null,
-        tech: 'Firmware menggerakkan Servo SG90 ke dua posisi terkonfirmasi: 0° (tertutup) dan 90° (terbuka). Suplai daya 5 V diambil dari rel DC-DC Buck Converter secara terpisah dari GPIO ESP32-C3 dengan GND bersama.',
+        tech: 'Firmware menggerakkan Servo SG90 memakai PWM Hardware LEDC 50 Hz (500–2400 µs) pada GPIO20 (bebas konflik UART0 TX). Mendukung posisi otomatis 0°/90° dan panel kalibrasi uji sudut 0°–180°. Suplai 5 V terpisah dari ESP32-C3 dengan GND bersama.',
         logFilter: 'Ventilasi|Servo',
       })}
 
@@ -810,7 +868,7 @@ const App = {
             <p class="lead-copy">Diagram teknik interaktif sesuai pemetaan pin ESP32-C3 SuperMini. Jalur data menyala real-time mengikuti kondisi aktual perangkat.</p>
           </div>
           <div class="hero-status-strip">
-            <span class="badge acc">GPIO0 · 1 · 3 · 4 · 5 · 6 · 7 · 10 · 21</span>
+            <span class="badge acc">GPIO0 · 1 · 3 · 4 · 5 · 6 · 7 · 10 · 20</span>
           </div>
         </div>
 
@@ -1050,6 +1108,42 @@ const App = {
           </div>
         </div>
       </section>
+      <aside class="servo-test-dock" id="servoTestDock" aria-label="Panel uji servo">
+        <div class="servo-test-panel" id="servoTestPanel" aria-hidden="true">
+          <div class="st-head">
+            <div>
+              <span class="eyebrow">SG90 PRECISION TEST</span>
+              <h4 style="font-family:var(--font-display);font-size:16px;margin-top:3px">Uji Sudut 0°–180°</h4>
+            </div>
+            <button class="icon-btn" type="button" id="servoTestClose" aria-label="Tutup panel test servo" style="width:30px;height:30px">
+              <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>
+            </button>
+          </div>
+          <div class="st-readout">
+            <span class="st-deg" id="stDegVal">0°</span>
+            <div class="st-pwm">
+              <div id="stPwmVal">500 µs · 50 Hz</div>
+              <div id="stConfVal">Aktual: —</div>
+            </div>
+          </div>
+          <input class="precision-slider" id="stSlider" type="range" min="0" max="180" step="1" value="0" aria-label="Sudut servo 0 hingga 180 derajat">
+          <div class="st-ticks" id="stTicks">
+            <button class="st-tick-btn" type="button" data-ang="0">0°</button>
+            <button class="st-tick-btn" type="button" data-ang="45">45°</button>
+            <button class="st-tick-btn" type="button" data-ang="90">90°</button>
+            <button class="st-tick-btn" type="button" data-ang="135">135°</button>
+            <button class="st-tick-btn" type="button" data-ang="180">180°</button>
+          </div>
+          <div class="btn-row" style="justify-content:space-between">
+            <button class="btn-ghost" type="button" id="stSweepBtn" style="padding:7px 13px;font-size:12px">Sweep 0°→180°</button>
+            <button class="btn-solid" type="button" id="stDoneBtn" style="padding:7px 14px;font-size:12px">Selesai Uji</button>
+          </div>
+        </div>
+        <button class="servo-test-fab" id="servoTestFab" type="button" aria-expanded="false" title="Buka Panel Test Servo">
+          <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
+          <span>Test Servo</span>
+        </button>
+      </aside>
     `;
   },
 
@@ -1168,6 +1262,11 @@ const App = {
 
     if (route.id === 'diagram' && this.diagram) this.diagram.fit();
     if (route.id === 'analytics') this.drawAnalytics(true);
+    const stDock = $('#servoTestDock');
+    if (stDock) {
+      stDock.classList.toggle('show', route.id === 'servo');
+      if (route.id !== 'servo' && this.servoTestOpen) this.toggleServoTest(false);
+    }
     this.drawActiveMiniCharts();
     this.moveDockIndicator();
     this.moveThumbs();
@@ -1401,7 +1500,10 @@ const App = {
       if (b) b.textContent = text;
     };
     set3dBadge('water', `AIR ${FMT.waterLevel(s.waterLevel)} · POMPA ${a.pump ? 'ON' : 'OFF'}`);
-    set3dBadge('servo', `SUDUT ${a.servo ? '90° (BUKA)' : '0° (TUTUP)'}`);
+    const sAngle = typeof a.servoAngle === 'number' ? a.servoAngle : (a.servo ? 90 : 0);
+    set3dBadge('servo', `SUDUT ${sAngle}°${a.servoTest ? ' (TEST)' : a.servo ? ' (BUKA)' : ' (TUTUP)'}`);
+    const stConf = $('#stConfVal');
+    if (stConf) stConf.textContent = `Aktual: ${typeof a.servoAngle === 'number' ? a.servoAngle + '°' : '—'}`;
     set3dBadge('fan', `KIPAS ${a.fan ? 'BERPUTAR' : 'BERHENTI'} · ${FMT.temperature(s.temperature)}`);
     set3dBadge('lighting', `LAMPU ${a.lamp ? 'MENYALA' : 'MATI'} · LDR ${FMT.light(s.light)}`);
     set3dBadge('temperature', `${FMT.temperature(s.temperature)} · RH ${FMT.humidity(s.humidity)}`);
@@ -1417,6 +1519,7 @@ const App = {
       fan: !!a.fan,
       lamp: !!a.lamp,
       servo: !!a.servo,
+      servoAngle: typeof a.servoAngle === 'number' ? a.servoAngle : -1,
     });
 
     if (this.diagram) this.diagram.updateState(s, a, online);
@@ -1583,6 +1686,46 @@ const App = {
     $('#themeBtn').addEventListener('click', () => this.setPref('theme', document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
     $('#dockBtn').addEventListener('click', () => this.setPref('dock', Store.prefs.dock === 'top' ? 'bottom' : 'top'));
     $('#dockExpand').addEventListener('click', () => this.toggleDrawer());
+
+    $('#servoTestFab').addEventListener('click', () => this.toggleServoTest());
+    $('#servoTestClose').addEventListener('click', () => this.toggleServoTest(false));
+    $('#stDoneBtn').addEventListener('click', () => this.toggleServoTest(false));
+    $('#stSlider').addEventListener('input', (e) => {
+      clearInterval(this.servoSweepTimer);
+      this.servoSweepTimer = null;
+      const v = Number(e.target.value);
+      this.updateServoSliderUi(v);
+      this.sendServoTest(true, v);
+    });
+    $('#stTicks').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-ang]');
+      if (!b) return;
+      clearInterval(this.servoSweepTimer);
+      this.servoSweepTimer = null;
+      const v = Number(b.dataset.ang);
+      this.updateServoSliderUi(v);
+      this.sendServoTest(true, v);
+    });
+    $('#stSweepBtn').addEventListener('click', () => {
+      if (this.servoSweepTimer) {
+        clearInterval(this.servoSweepTimer);
+        this.servoSweepTimer = null;
+        return;
+      }
+      const steps = [0, 45, 90, 135, 180, 90, 0];
+      let idx = 0;
+      const run = () => {
+        const v = steps[idx++];
+        this.updateServoSliderUi(v);
+        this.sendServoTest(true, v);
+        if (idx >= steps.length) {
+          clearInterval(this.servoSweepTimer);
+          this.servoSweepTimer = null;
+        }
+      };
+      run();
+      this.servoSweepTimer = setInterval(run, 950);
+    });
 
     const chipsWrap = $('#seriesChips');
     const renderChips = () => {
