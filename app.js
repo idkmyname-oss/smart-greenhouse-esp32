@@ -990,6 +990,38 @@ const App = {
           </form>
         </div>
 
+        <div class="sec-block panel">
+          <div class="sec-head" style="margin-bottom:6px">
+            <div>
+              <span class="eyebrow">JARINGAN PERANGKAT TANPA FLASH ULANG</span>
+              <h2 class="section-title">Pengaturan Wi-Fi ESP32-C3</h2>
+            </div>
+            <span class="badge hydro" id="wifiModeBadge">SUMBER: —</span>
+          </div>
+          <p class="lead-copy" style="margin-top:6px;font-size:13.5px">Awalnya ESP32-C3 memakai Wi-Fi default yang ditulis di file <code>.ino</code>. Anda dapat mengganti SSID/Password dari sini; jika gagal terhubung, ESP32-C3 otomatis kembali ke Wi-Fi sebelumnya dan password langsung dihapus dari database setelah dibaca perangkat.</p>
+          <div class="kv-list" style="margin-top:12px">
+            <div class="kv-row"><span class="kv-k">SSID Aktif di ESP32-C3</span><span class="kv-v" id="wifiCurSsid">—</span></div>
+            <div class="kv-row"><span class="kv-k">Status Wi-Fi Perangkat</span><span class="kv-v" id="wifiCurMsg">Menunggu laporan ESP32-C3</span></div>
+          </div>
+          <form class="form-grid" id="wifiForm" style="margin-top:16px" novalidate>
+            <div class="thresh-pair">
+              <div class="field">
+                <label for="wifiSsid">Nama Wi-Fi (SSID Baru)</label>
+                <input id="wifiSsid" placeholder="Masukkan nama Wi-Fi / hotspot" autocomplete="off" spellcheck="false">
+              </div>
+              <div class="field">
+                <label for="wifiPass">Password Wi-Fi Baru</label>
+                <input id="wifiPass" type="password" placeholder="Kosongkan jika Wi-Fi tanpa password" autocomplete="new-password">
+              </div>
+            </div>
+            <div class="thresh-err" id="wifiErr"></div>
+            <div class="btn-row">
+              <button class="btn-solid" type="submit" id="wifiSaveBtn">Simpan & Ganti Wi-Fi</button>
+              <button class="btn-ghost" type="button" id="wifiResetBtn">Reset Wi-Fi Default (.ino)</button>
+            </div>
+          </form>
+        </div>
+
         <div class="sec-block bento-2">
           <div class="panel">
             <span class="eyebrow">ANTARMUKA & PERFORMA 3D</span>
@@ -1316,6 +1348,13 @@ const App = {
     $('#dNodes').textContent = String(Object.keys(Store.g).length);
     $('#dAge').textContent = age === null ? '—' : `${Math.round(age)} detik`;
 
+    const conn = Store.g.connection || {};
+    const curSsid = typeof conn.wifiSsid === 'string' && conn.wifiSsid ? conn.wifiSsid : '—';
+    const isDef = conn.wifiDefault !== false;
+    $('#wifiCurSsid').textContent = curSsid;
+    $('#wifiCurMsg').textContent = typeof conn.wifiMsg === 'string' && conn.wifiMsg ? conn.wifiMsg : (online ? 'Terhubung' : 'Menunggu laporan ESP32-C3');
+    $('#wifiModeBadge').textContent = curSsid === '—' ? 'SUMBER: —' : isDef ? 'SUMBER: DEFAULT (.ino)' : 'SUMBER: KUSTOM (NVS)';
+
     const pill = $('#linkPill');
     pill.dataset.s = online ? 'on' : Store.link === 'wait' || Store.link === 'error' ? 'wait' : has ? 'off' : '';
     $('.pill-label', pill).textContent = Store.link === 'idle' ? 'Belum terhubung' : online ? 'ESP32-C3 Online' : Store.link === 'open' ? 'Perangkat Offline' : ls;
@@ -1638,6 +1677,60 @@ const App = {
         }
       } else {
         Toast.show('Formulir direset ke angka default.');
+      }
+    });
+
+    $('#wifiForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const ssid = $('#wifiSsid').value.trim();
+      const password = $('#wifiPass').value;
+      if (!ssid) {
+        $('#wifiErr').textContent = 'Nama Wi-Fi (SSID) wajib diisi.';
+        return;
+      }
+      if (!Link.check(Store.cfg.url)) {
+        $('#wifiErr').textContent = 'Hubungkan Firebase Realtime Database terlebih dahulu.';
+        return;
+      }
+      $('#wifiErr').textContent = '';
+      const ok = await Ask.open(
+        'Ganti Wi-Fi ESP32-C3?',
+        `ESP32-C3 akan mencoba tersambung ke "${ssid}". Jika gagal dalam 15 detik, perangkat otomatis kembali ke Wi-Fi sebelumnya.`,
+        'Ganti Wi-Fi'
+      );
+      if (!ok) return;
+      Toast.show('Mengirim konfigurasi Wi-Fi ke ESP32-C3…');
+      try {
+        await Link.put('commands/wifi', { action: 'update', ssid, password, reqId: String(Date.now()) });
+        $('#wifiPass').value = '';
+        Store.note('cmd', `Permintaan ganti Wi-Fi ke "${ssid}" dikirim`);
+        Toast.show('Terkirim! ESP32-C3 akan beralih Wi-Fi dalam ±5 detik dan menghapus password dari database.');
+      } catch (ex) {
+        Toast.show(ex.message || 'Gagal mengirim konfigurasi Wi-Fi', 'err');
+      }
+    });
+
+    $('#wifiResetBtn').addEventListener('click', async () => {
+      if (!Link.check(Store.cfg.url)) {
+        $('#wifiErr').textContent = 'Hubungkan Firebase Realtime Database terlebih dahulu.';
+        return;
+      }
+      $('#wifiErr').textContent = '';
+      const ok = await Ask.open(
+        'Reset Wi-Fi ke default (.ino)?',
+        'ESP32-C3 akan menghapus Wi-Fi kustom di memori NVS dan kembali memakai DEFAULT_WIFI_SSID & DEFAULT_WIFI_PASSWORD dari file firmware.',
+        'Reset Wi-Fi Default'
+      );
+      if (!ok) return;
+      Toast.show('Mengirim perintah reset Wi-Fi default…');
+      try {
+        await Link.put('commands/wifi', { action: 'reset', reqId: String(Date.now()) });
+        $('#wifiSsid').value = '';
+        $('#wifiPass').value = '';
+        Store.note('cmd', 'Permintaan reset Wi-Fi ke default firmware dikirim');
+        Toast.show('Perintah reset Wi-Fi terkirim ke ESP32-C3.');
+      } catch (ex) {
+        Toast.show(ex.message || 'Gagal mengirim reset Wi-Fi', 'err');
       }
     });
 

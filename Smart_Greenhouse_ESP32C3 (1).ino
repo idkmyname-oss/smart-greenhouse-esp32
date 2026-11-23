@@ -6,8 +6,8 @@
 #include <Preferences.h>
 #include <time.h>
 
-const char* WIFI_SSID = "ISI_NAMA_WIFI";
-const char* WIFI_PASSWORD = "ISI_PASSWORD_WIFI";
+const char* DEFAULT_WIFI_SSID = "ISI_NAMA_WIFI";
+const char* DEFAULT_WIFI_PASSWORD = "ISI_PASSWORD_WIFI";
 const char* FIREBASE_HOST = "smart-greenhouse-esp32-default-rtdb.asia-southeast1.firebasedatabase.app";
 const char* FIREBASE_AUTH_TOKEN = "";
 
@@ -90,6 +90,12 @@ int airRendahPersen = DEFAULT_AIR_RENDAH;
 int sudutTutup = DEFAULT_SUDUT_TUTUP;
 int sudutBuka = DEFAULT_SUDUT_BUKA;
 
+String wifiSsidAktif = DEFAULT_WIFI_SSID;
+String wifiPassAktif = DEFAULT_WIFI_PASSWORD;
+bool wifiPakaiDefault = true;
+String wifiPesan = "Menggunakan Wi-Fi default dari firmware";
+String wifiReqTerakhir = "";
+
 const unsigned long JEDA_SENSOR = 1000;
 const unsigned long JEDA_FIREBASE = 5000;
 const unsigned long JEDA_SAMBUNG_ULANG = 15000;
@@ -118,6 +124,38 @@ int gagalBeruntun = 0;
 unsigned long waktuSensorTerakhir = 0;
 unsigned long waktuFirebaseTerakhir = 0;
 unsigned long waktuWifiTerakhir = 0;
+
+void muatWifiLokal() {
+  prefs.begin("gh_wifi", true);
+  bool kustom = prefs.getBool("custom", false);
+  String s = prefs.getString("ssid", "");
+  String p = prefs.getString("pass", "");
+  prefs.end();
+
+  if (kustom && s.length() > 0) {
+    wifiSsidAktif = s;
+    wifiPassAktif = p;
+    wifiPakaiDefault = false;
+    wifiPesan = "Menggunakan Wi-Fi tersimpan di NVS";
+  } else {
+    wifiSsidAktif = DEFAULT_WIFI_SSID;
+    wifiPassAktif = DEFAULT_WIFI_PASSWORD;
+    wifiPakaiDefault = true;
+    wifiPesan = "Menggunakan Wi-Fi default dari firmware";
+  }
+}
+
+void simpanWifiLokal(const String &ssid, const String &pass, bool pakaiDefault) {
+  prefs.begin("gh_wifi", false);
+  if (pakaiDefault) {
+    prefs.clear();
+  } else {
+    prefs.putBool("custom", true);
+    prefs.putString("ssid", ssid);
+    prefs.putString("pass", pass);
+  }
+  prefs.end();
+}
 
 void muatBatasLokal() {
   prefs.begin("gh_cfg", true);
@@ -161,21 +199,40 @@ void siapkanRelay(int pin) {
   digitalWrite(pin, RELAY_MATI);
 }
 
-void sambungWifi() {
-  Serial.println("Menyambungkan Wi-Fi...");
+bool cobaSambungWifi(const String &ssid, const String &pass) {
+  WiFi.disconnect(true);
+  delay(200);
   WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.begin(ssid.c_str(), pass.c_str());
 
   unsigned long mulai = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - mulai < BATAS_WAKTU_WIFI) {
     delay(250);
   }
+  return WiFi.status() == WL_CONNECTED;
+}
 
-  if (WiFi.status() == WL_CONNECTED) {
+void sambungWifi() {
+  Serial.printf("Menyambungkan Wi-Fi: %s...\n", wifiSsidAktif.c_str());
+  if (cobaSambungWifi(wifiSsidAktif, wifiPassAktif)) {
     Serial.println("Wi-Fi terhubung");
-  } else {
-    Serial.println("Wi-Fi gagal, sistem berjalan otomatis secara lokal");
+    return;
   }
+
+  if (!wifiPakaiDefault) {
+    Serial.println("Wi-Fi kustom gagal, mencoba Wi-Fi default firmware...");
+    if (cobaSambungWifi(DEFAULT_WIFI_SSID, DEFAULT_WIFI_PASSWORD)) {
+      wifiSsidAktif = DEFAULT_WIFI_SSID;
+      wifiPassAktif = DEFAULT_WIFI_PASSWORD;
+      wifiPakaiDefault = true;
+      wifiPesan = "Fallback ke Wi-Fi default karena Wi-Fi kustom gagal";
+      simpanWifiLokal("", "", true);
+      Serial.println("Terhubung ke Wi-Fi default");
+      return;
+    }
+  }
+
+  Serial.println("Wi-Fi gagal, sistem berjalan otomatis secara lokal");
 }
 
 int bacaAdcStabil(int pin, bool &valid) {
@@ -305,6 +362,16 @@ String teksBool(bool nilai) {
   return nilai ? "true" : "false";
 }
 
+String escapeJson(const String &s) {
+  String out = "";
+  for (unsigned int i = 0; i < s.length(); i++) {
+    char c = s[i];
+    if (c == '\"' || c == '\\') out += '\\';
+    out += c;
+  }
+  return out;
+}
+
 float nilaiAman(float nilai) {
   return isnan(nilai) ? -99.0 : nilai;
 }
@@ -347,6 +414,16 @@ String susunDataBatas() {
   return json;
 }
 
+String susunDataKoneksi() {
+  String json = "{";
+  json += "\"esp32Status\":\"online\"";
+  json += ",\"wifiSsid\":\"" + escapeJson(wifiSsidAktif) + "\"";
+  json += ",\"wifiDefault\":" + teksBool(wifiPakaiDefault);
+  json += ",\"wifiMsg\":\"" + escapeJson(wifiPesan) + "\"";
+  json += "}";
+  return json;
+}
+
 bool nilaiBenar(const String &json, const char* kunci) {
   String cari = String("\"") + kunci + "\":true";
   return json.indexOf(cari) >= 0;
@@ -368,6 +445,26 @@ bool ambilAngka(const String &json, const char* kunci, float &keluar) {
   if (akhir == pos) return false;
   keluar = json.substring(pos, akhir).toFloat();
   return true;
+}
+
+bool ambilTeks(const String &json, const char* kunci, String &keluar) {
+  String cari = String("\"") + kunci + "\":\"";
+  int pos = json.indexOf(cari);
+  if (pos < 0) return false;
+  pos += cari.length();
+  String hasil = "";
+  while (pos < (int)json.length()) {
+    char c = json[pos++];
+    if (c == '\\' && pos < (int)json.length()) {
+      hasil += json[pos++];
+    } else if (c == '\"') {
+      keluar = hasil;
+      return true;
+    } else {
+      hasil += c;
+    }
+  }
+  return false;
 }
 
 void terapkanBatasDariJson(const String &json) {
@@ -472,6 +569,59 @@ bool firebaseKirim(const String &jalur, const String &json) {
   return kode == 200;
 }
 
+void prosesPerintahWifi(const String &json) {
+  String aksi = "";
+  String reqId = "";
+  if (!ambilTeks(json, "action", aksi)) return;
+  ambilTeks(json, "reqId", reqId);
+  if (reqId.length() > 0 && reqId == wifiReqTerakhir) return;
+  wifiReqTerakhir = reqId;
+
+  firebaseKirim("/greenhouse/commands/wifi", "null");
+
+  String lamaSsid = wifiSsidAktif;
+  String lamaPass = wifiPassAktif;
+  bool lamaDefault = wifiPakaiDefault;
+
+  if (aksi == "reset") {
+    Serial.println("Mereset Wi-Fi ke default bawaan firmware...");
+    if (cobaSambungWifi(DEFAULT_WIFI_SSID, DEFAULT_WIFI_PASSWORD)) {
+      wifiSsidAktif = DEFAULT_WIFI_SSID;
+      wifiPassAktif = DEFAULT_WIFI_PASSWORD;
+      wifiPakaiDefault = true;
+      wifiPesan = "Wi-Fi berhasil direset ke default firmware";
+      simpanWifiLokal("", "", true);
+    } else {
+      cobaSambungWifi(lamaSsid, lamaPass);
+      wifiPesan = "Gagal menyambung ke Wi-Fi default, kembali ke Wi-Fi sebelumnya";
+    }
+    return;
+  }
+
+  if (aksi == "update") {
+    String baruSsid = "";
+    String baruPass = "";
+    if (!ambilTeks(json, "ssid", baruSsid) || baruSsid.length() == 0) return;
+    ambilTeks(json, "password", baruPass);
+
+    Serial.printf("Mencoba Wi-Fi baru: %s...\n", baruSsid.c_str());
+    if (cobaSambungWifi(baruSsid, baruPass)) {
+      wifiSsidAktif = baruSsid;
+      wifiPassAktif = baruPass;
+      wifiPakaiDefault = false;
+      wifiPesan = "Berhasil beralih ke Wi-Fi baru dan tersimpan di NVS";
+      simpanWifiLokal(baruSsid, baruPass, false);
+    } else {
+      Serial.println("Wi-Fi baru gagal, mengembalikan ke Wi-Fi sebelumnya...");
+      cobaSambungWifi(lamaSsid, lamaPass);
+      wifiSsidAktif = lamaSsid;
+      wifiPassAktif = lamaPass;
+      wifiPakaiDefault = lamaDefault;
+      wifiPesan = "Gagal terhubung ke " + baruSsid + ", otomatis kembali ke " + lamaSsid;
+    }
+  }
+}
+
 void catatGagal() {
   gagalBeruntun++;
   if (gagalBeruntun >= BATAS_GAGAL) {
@@ -483,6 +633,11 @@ void sinkronFirebase() {
   if (WiFi.status() != WL_CONNECTED) {
     catatGagal();
     return;
+  }
+
+  String perintahWifi;
+  if (firebaseAmbil("/greenhouse/commands/wifi", perintahWifi) && perintahWifi.length() > 4 && perintahWifi != "null") {
+    prosesPerintahWifi(perintahWifi);
   }
 
   String balasanBatas;
@@ -523,7 +678,7 @@ void sinkronFirebase() {
 
   firebaseKirim("/greenhouse/actuators", susunDataAktuator());
   firebaseKirim("/greenhouse/sensors", susunDataSensor());
-  firebaseKirim("/greenhouse/connection/esp32Status", "\"online\"");
+  firebaseKirim("/greenhouse/connection", susunDataKoneksi());
 
   unsigned long waktuSekarang = (unsigned long)time(nullptr);
   if (waktuSekarang > 1700000000UL) {
@@ -538,6 +693,7 @@ void setup() {
     delay(10);
   }
 
+  muatWifiLokal();
   muatBatasLokal();
   analogReadResolution(12);
 
